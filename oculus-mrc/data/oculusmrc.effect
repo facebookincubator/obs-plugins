@@ -1,0 +1,89 @@
+/*
+Copyright (C) 2019-present, Facebook, Inc.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; version 2 of the License.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+uniform float4x4 ViewProj;
+uniform float4x4 color_matrix;
+uniform float3 color_range_min = {0.0, 0.0, 0.0};
+uniform float3 color_range_max = {1.0, 1.0, 1.0};
+uniform texture2d image;
+
+sampler_state def_sampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertInOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertInOut VSDefault(VertInOut vert_in)
+{
+	VertInOut vert_out;
+	vert_out.pos = mul(float4(vert_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = vert_in.uv;
+	return vert_out;
+}
+
+float4 PSDrawEmpty(VertInOut vert_in) : TARGET
+{
+	if (vert_in.uv.x >= 0.5)
+	{
+		return float4(0, 1, 0, 1);
+	}
+	else
+	{
+		return float4(0, 0, 1, 0.5);
+	}
+}
+
+float4 PSDrawFrame(VertInOut vert_in) : TARGET
+{
+	if (vert_in.uv.x >= 0.5)
+	{
+		float2 color_uv = float2((vert_in.uv.x - 0.5) * 0.5 + 0.5, vert_in.uv.y);
+		float2 alpha_uv = color_uv + float2(0.25, 0);
+		
+		float alpha = image.Sample(def_sampler, alpha_uv).r;
+		float3 color = image.Sample(def_sampler, color_uv).rgb;
+		return float4(color, alpha);
+	}
+	else
+	{
+		float4 color = image.Sample(def_sampler, vert_in.uv);
+		return color;
+	}
+}
+
+technique Empty
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSDrawEmpty(vert_in);
+	}
+}
+
+technique Frame
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSDrawFrame(vert_in);
+	}
+}

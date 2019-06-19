@@ -1,0 +1,14 @@
+# EditorConfig is awesome: http://EditorConfig.org
+# Since OBS follows the Linux kernel coding style I have started this file to
+# help with automatically setting various text editors to those requirements.
+
+# top-most EditorConfig file
+root = false
+
+# Unix-style newlines with a newline ending every file.
+[*]
+
+[*.{cpp,c,h}]
+indent_style = tab
+tab_width = 4
+indent_size = 4
