@@ -96,20 +96,19 @@ public:
 
 		obs_properties_t *props = obs_properties_create();
 
-		obs_properties_add_text(props, "ipaddr",
-			obs_module_text("IpAddress"), OBS_TEXT_DEFAULT);
+		obs_properties_add_text(props, "ipaddr", obs_module_text("Quest IP Address"), OBS_TEXT_DEFAULT);
 
 		obs_properties_add_int(props, "port", obs_module_text("Port"), 1025, 65535, 1);
 
 		obs_property_t* connectButton = obs_properties_add_button(props, "connect",
-			obs_module_text("Connect"), [](obs_properties_t *props,
+			obs_module_text("Connect to MRC-enabled game running on Quest"), [](obs_properties_t *props,
 				obs_property_t *property, void *data) {
 			return ((OculusMrcSource *)data)->ConnectClicked(props, property);
 		});
 		obs_property_set_enabled(connectButton, context->m_connectSocket == INVALID_SOCKET);
 
 		obs_property_t* disconnectButton = obs_properties_add_button(props, "disconnect",
-			obs_module_text("Disconnect"), [](obs_properties_t *props,
+			obs_module_text("Disconnect from Quest game"), [](obs_properties_t *props,
 				obs_property_t *property, void *data) {
 			return ((OculusMrcSource *)data)->DisconnectClicked(props, property);
 		});
@@ -214,6 +213,7 @@ private:
 	~OculusMrcSource()
 	{
 		StopDecoder();
+		obs_enter_graphics();
 		if (m_mrc_effect)
 		{
 			gs_effect_destroy(m_mrc_effect);
@@ -229,6 +229,7 @@ private:
 			sws_freeContext(m_swsContext);
 			m_swsContext = nullptr;
 		}
+		obs_leave_graphics();
 	}
 
 	void StartDecoder()
@@ -276,7 +277,9 @@ private:
 
 		if (m_temp_texture)
 		{
+			obs_enter_graphics();
 			gs_texture_destroy(m_temp_texture);
+			obs_leave_graphics();
 			m_temp_texture = nullptr;
 		}
 	}
@@ -619,15 +622,56 @@ private:
 			freeaddrinfo(result);
 		}
 
-		iResult = connect(m_connectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
-		if (iResult == SOCKET_ERROR)
+		if (m_connectSocket != INVALID_SOCKET)
 		{
-			OM_BLOG(LOG_ERROR, "Unable to connect");
-			closesocket(m_connectSocket);
-			m_connectSocket = INVALID_SOCKET;
-		}
+			// put socked in non-blocking mode...
+			u_long block = 1;
+			if (ioctlsocket(m_connectSocket, FIONBIO, &block) == SOCKET_ERROR)
+			{
+				OM_BLOG(LOG_ERROR, "Unable to put socket to unblocked mode");
+			}
 
-		OM_BLOG(LOG_INFO, "Socket connected to %s:%d", m_ipaddr.c_str(), m_port);
+			iResult = connect(m_connectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
+			bool hasError = true;
+			if (iResult == SOCKET_ERROR)
+			{
+				if (WSAGetLastError() == WSAEWOULDBLOCK)
+				{
+					fd_set setW, setE;
+
+					FD_ZERO(&setW);
+					FD_SET(m_connectSocket, &setW);
+					FD_ZERO(&setE);
+					FD_SET(m_connectSocket, &setE);
+
+					timeval time_out = { 0 };
+					time_out.tv_sec = 2;
+					time_out.tv_usec = 0;
+
+					int ret = select(0, NULL, &setW, &setE, &time_out);
+					if (ret > 0 && !FD_ISSET(m_connectSocket, &setE))
+					{
+						hasError = false;
+					}
+				}
+			}
+			if (hasError)
+			{
+				OM_BLOG(LOG_ERROR, "Unable to connect");
+				MessageBox(NULL, TEXT("Please verify the Quest IP address, and if MRC-enabled game is running on Quest.\n\nReboot the headset and re-launch the game if the issue remains."), TEXT("Connection failed"), MB_OK);
+				closesocket(m_connectSocket);
+				m_connectSocket = INVALID_SOCKET;
+			}
+			else
+			{
+				OM_BLOG(LOG_INFO, "Socket connected to %s:%d", m_ipaddr.c_str(), m_port);
+				block = 0;
+				if (ioctlsocket(m_connectSocket, FIONBIO, &block) == SOCKET_ERROR)
+				{
+					OM_BLOG(LOG_ERROR, "Unable to put socket to blocked mode");
+				}
+			}
+		}
 
 		freeaddrinfo(result);
 
@@ -637,7 +681,10 @@ private:
 		m_videoFrameIndex = 0;
 		m_cachedAudioFrames.clear();
 
-		StartDecoder();
+		if (m_connectSocket != INVALID_SOCKET)
+		{
+			StartDecoder();
+		}
 	}
 
 	void Disconnect()
@@ -670,6 +717,8 @@ MODULE_EXPORT const char *obs_module_description(void)
 
 bool obs_module_load(void)
 {
+	avcodec_register_all();
+
 	// Initialize Winsock
 	WSADATA wsaData = { 0 };
 	int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
